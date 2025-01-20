@@ -1,92 +1,102 @@
 import os
 import json
-import numpy as np
+import sys
 from datetime import datetime, timedelta
 
-def find_txt_file(data_dir="data"):
-    """Find the first .txt file in the specified directory."""
+# Find the path to the text file
+def find_txt_file(data_dir="../data"):  
     for file_name in os.listdir(data_dir):
         if file_name.endswith(".txt"):
             return os.path.join(data_dir, file_name)
     raise FileNotFoundError("No .txt file found in the data directory")
 
-# Paths
-txt_file_path = find_txt_file("data") 
-output_json_path = os.path.join("output", "fhir_observations.json")
+# Get the text file path from command line or search for it
+txt_file_path = sys.argv[1] if len(sys.argv) > 1 else find_txt_file()
 
-def process_txt_to_fhir_with_metadata(txt_file_path, output_json_path):
-    """Process the OpenSignals text file and create a JSON file with detailed observations."""
-    with open(txt_file_path, "r") as file:
-        lines = file.readlines()
-        
-        
-        for line in lines:
-            if line.startswith("#"):
-                if line.startswith("# {"):
-                    metadata = json.loads(line[2:])
-                continue
-            break
-        
-        # Sampling rate and start time from metadata
-        sampling_rate = metadata["98:D3:21:FC:8B:12"]["sampling rate"]
-        start_date = metadata["98:D3:21:FC:8B:12"]["date"]
-        start_time = metadata["98:D3:21:FC:8B:12"]["time"]
-        start_datetime = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M:%S.%f")
-        
-        # Extract ECG data from column A2 (corresponds to the ECG channel in the file)
+# Define the base directory of the project
+base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# Relative output path
+output_json_path = os.path.join(base_dir, "output", "fhir_observations.json")
+
+print(f"Processing file: {txt_file_path}")
+print(f"Output file will be saved to: {output_json_path}")
+
+# Function to convert text file to JSON
+def process_txt_to_json(txt_file_path, output_json_path):
+    try:
+        # Read data from the text file
+        with open(txt_file_path, "r", encoding="utf-8") as txt_file:
+            lines = txt_file.readlines()
+
+        # Skip headers and unnecessary data
+        data_lines = [line for line in lines if not line.startswith("#")]
+
+        # Extract relevant columns of data
+        sequence_numbers = []
         ecg_data = []
-        for line in lines:
-            if not line.startswith("#"):
-                values = line.strip().split('\t')
-                ecg_data.append(float(values[6]))  # Column 7 (index 6) is A2 (ECG data)
-        
-    # Time step calculation
-    time_step = 1 / sampling_rate
 
-    # Create FHIR-compliant Observation resources
-    fhir_observations = []
-    for i, value in enumerate(ecg_data):
-        effective_time = start_datetime + timedelta(seconds=i * time_step)
-        fhir_observations.append({
-            "resourceType": "Observation",
-            "id": str(i),
-            "status": "final",
-            "category": [
-                {
+        for line in data_lines:
+            columns = line.strip().split("\t")
+            if len(columns) > 6:  # Ensure there's an ECG data column
+                sequence_numbers.append(float(columns[0]))  # Sequence number
+                ecg_data.append(float(columns[6]))  # ECG data
+
+        # Prepare data for JSON output
+        sampling_rate = 100  # Sampling rate
+        time_step = 1 / sampling_rate
+        start_time = datetime(2025, 1, 20)  # Initial time
+
+        timestamps = [
+            start_time + timedelta(seconds=seq * time_step)
+            for seq in sequence_numbers
+        ]
+
+        fhir_observations = [
+            {
+                "resourceType": "Observation",
+                "id": str(int(seq_num)),
+                "status": "final",
+                "category": [
+                    {
+                        "coding": [
+                            {
+                                "system": "http://hl7.org/fhir/observation-category",
+                                "code": "vital-signs",
+                            }
+                        ]
+                    }
+                ],
+                "code": {
                     "coding": [
                         {
-                            "system": "http://hl7.org/fhir/observation-category",
-                            "code": "vital-signs"
+                            "system": "http://loinc.org",
+                            "code": "85354-9",
+                            "display": "ECG",
                         }
                     ]
-                }
-            ],
-            "code": {
-                "coding": [
-                    {
-                        "system": "http://loinc.org",
-                        "code": "85354-9",
-                        "display": "ECG"
-                    }
-                ]
-            },
-            "subject": {"reference": "Patient/1"},
-            "effectiveDateTime": effective_time.isoformat(),
-            "valueQuantity": {
-                "value": float(value),
-                "unit": "mV",
-                "system": "http://unitsofmeasure.org",
-                "code": "mV"
-            },
-            "samplingRate": sampling_rate
-        })
+                },
+                "subject": {"reference": "Patient/1"},
+                "effectiveDateTime": timestamp.isoformat(),
+                "valueQuantity": {
+                    "value": ecg_data[i],
+                    "unit": "mV",
+                    "system": "http://unitsofmeasure.org",
+                    "code": "mV",
+                },
+            }
+            for i, (seq_num, timestamp) in enumerate(zip(sequence_numbers, timestamps))
+        ]
 
-    # Save the observations as a JSON file
-    os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
-    with open(output_json_path, "w") as json_file:
-        json.dump(fhir_observations, json_file, indent=4)
+        # Write JSON file
+        os.makedirs(os.path.dirname(output_json_path), exist_ok=True)
+        with open(output_json_path, "w", encoding="utf-8") as json_file:
+            json.dump(fhir_observations, json_file, indent=4, ensure_ascii=False)
 
-    print(f"FHIR observations with metadata saved to {output_json_path}")
+        print(f"JSON file has been saved to {output_json_path}")
 
-# Run the processing function
-process_txt_to_fhir_with_metadata(txt_file_path, output_json_path)
+    except Exception as e:
+        print(f"An error occurred while processing the file: {e}")
+
+# Call the function
+process_txt_to_json(txt_file_path, output_json_path)
