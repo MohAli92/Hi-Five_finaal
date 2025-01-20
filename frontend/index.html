@@ -179,7 +179,7 @@
         <!-- Upload Section from Index and Dashboard -->
         <form id="upload-form" class="upload-container" enctype="multipart/form-data" style="display: none;">
             <h3>Upload ECG Data</h3>
-            <input type="file" id="file-input" name="file" accept=".h5,.txt" required />
+            <input type="file" id="file-input" name="file" accept=".txt" required />
             <button type="submit">Upload and Process</button>
         </form>
         <div id="loading-spinner" style="display:none; text-align: center;">Processing...</div>
@@ -225,7 +225,7 @@
                 if (response.ok) {
                     const data = await response.json();
                     updateChart(data);
-                    chartMessage.textContent = "ECG signals appear normal. No significant irregularities detected.";
+                    chartMessage.textContent = "ECG signals appear normal. No arrhythmia detected.";
                 } else {
                     alert("Failed to process file.");
                 }
